@@ -1,0 +1,2689 @@
+// ============================================================
+// EasySkillOS — Complete DBML Schema
+// Generated from SQLAlchemy models (EasyskillOS-dev-one)
+// ============================================================
+
+
+// ============================================================
+// GROUP 1: Auth & Users
+// ============================================================
+
+Table users {
+  id varchar(36) [pk, note: "UUID primary key"]
+  phone varchar(15) [not null, unique, note: "Login credential"]
+  email varchar(255) [unique, note: "Optional email"]
+  password_hash varchar(255) [note: "bcrypt hash; null for OTP-only users"]
+  role varchar(20) [not null, default: "student", note: "student|counselor|admin|super_admin|faculty|hr|finance|placement|employer|parent|reviewer|partner|college|alumni|recruiter|corporate"]
+  centre varchar(20) [default: "online", note: "adajan|vesu|bhestan|online"]
+  is_active boolean [default: true]
+  is_deleted boolean [default: false, note: "DPDP Act compliance soft delete"]
+  deleted_at timestamptz
+  is_hidden_from_staff_list boolean [not null, default: false]
+  last_login_at timestamptz
+  permissions json [note: "NULL = inherit role default; list of resource.action strings"]
+  manager_id varchar(36) [note: "Self-FK for manager hierarchy; NULL = top-level"]
+  is_2fa_enabled boolean [not null, default: false]
+  totp_secret_encrypted text [note: "Fernet-wrapped base32 TOTP secret"]
+  two_factor_method varchar(16) [note: "totp | NULL"]
+  two_factor_enabled_at timestamptz
+  two_factor_reset_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table user_backup_codes {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null, note: "FK users.id CASCADE"]
+  code_hash varchar(255) [not null, note: "bcrypt hash of one-time recovery code"]
+  batch_id varchar(36) [not null, note: "Invalidates full set on regeneration"]
+  used_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table profiles {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null, unique]
+  full_name varchar(100) [not null]
+  avatar_initials varchar(5)
+  avatar_url varchar(500)
+  city varchar(50)
+  state varchar(50)
+  education varchar(50)
+  situation varchar(30)
+  goal varchar(30)
+  language_pref varchar(5) [default: "en"]
+  onboarding_completed boolean [default: false]
+  referral_code varchar(20) [unique]
+  referred_by varchar(20)
+  bio text
+  linkedin_url varchar(300)
+  telegram_username varchar(64)
+  telegram_chat_id bigint [unique, note: "Telegram chat id for DM alerts"]
+  portfolio_visible boolean [default: true]
+  notification_preferences json [note: "6 toggle keys; see DEFAULT_NOTIFICATION_PREFERENCES"]
+  public_slug varchar(80) [unique, note: "https://easyskill.in/portfolio/{slug}"]
+  public_slug_custom boolean [not null, default: false]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table api_keys {
+  id varchar(36) [pk]
+  name varchar(100) [not null, note: "Human-readable label e.g. 'n8n WhatsApp Bot'"]
+  key_prefix varchar(20) [not null, note: "First 16 chars; safe to display/log"]
+  key_hash varchar(255) [not null, note: "bcrypt hash; plaintext never stored"]
+  scope varchar(50) [not null, default: "leads:write"]
+  created_by_id varchar(36) [not null]
+  created_at timestamptz [not null]
+  last_used_at timestamptz
+  last_used_ip varchar(45)
+  revoked_at timestamptz
+  is_active boolean [not null, default: true]
+}
+
+Table audit_logs {
+  id varchar(36) [pk]
+  user_id varchar(36) [note: "Nullable — system actions may not have a user"]
+  action varchar(100) [not null]
+  resource varchar(100)
+  resource_type varchar(50)
+  resource_id varchar(100)
+  old_value json
+  new_value json
+  details json
+  extra_data json
+  ip_address varchar(45)
+  user_agent varchar(200)
+  created_at timestamptz
+}
+
+Table active_sessions {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  jwt_jti varchar(36) [not null, unique, note: "JWT ID for blacklist checks"]
+  device_info json [not null, note: "{user_agent, os, browser, ip_address}"]
+  ip_address varchar(45)
+  is_active boolean [not null, default: true]
+  created_at timestamptz
+  last_active_at timestamptz [not null]
+}
+
+Table security_events {
+  id varchar(36) [pk]
+  event_type varchar(50) [not null, note: "failed_login|suspicious_ip|brute_force_detected|..."]
+  user_id varchar(36)
+  ip_address varchar(45)
+  user_agent text
+  metadata json [not null]
+  severity varchar(20) [not null, default: "low", note: "low|medium|high|critical"]
+  resolved boolean [not null, default: false]
+  resolved_by varchar(100)
+  resolved_at timestamptz
+  resolution_note text
+  created_at timestamptz
+}
+
+Table erasure_requests {
+  id varchar(36) [pk, note: "DPDP Act 2023 Right to Erasure"]
+  user_id varchar(36) [not null]
+  user_email varchar(300)
+  user_name varchar(300)
+  reason text [not null]
+  status varchar(20) [not null, default: "pending", note: "pending|approved|rejected|completed"]
+  reviewed_by varchar(100)
+  reviewed_at timestamptz
+  rejection_reason text
+  erasure_completed_at timestamptz
+  retained_record_ids json [not null, note: "Records under legal hold"]
+  created_at timestamptz
+}
+
+
+// ============================================================
+// GROUP 2: CRM
+// ============================================================
+
+Table leads {
+  id varchar(36) [pk]
+  phone varchar(15) [not null, unique]
+  alternate_phone varchar(15) [note: "Alternative / guardian contact"]
+  email varchar(200)
+  name varchar(100) [not null]
+  source varchar(30) [not null, default: "organic", note: "meta_ad|google_ad|walkin|referral|whatsapp|organic|ctwa|discover10x"]
+  status varchar(30) [not null, default: "new", note: "new|contacted|interested|visit_scheduled|center_visited|demo_scheduled|seat_reserved|admission_done|lost|dormant"]
+  centre varchar(20) [note: "adajan|vesu|bhestan|remote|any"]
+  assigned_counselor_id varchar(36)
+  assigned_at timestamptz [note: "Set on counselor change; drives stale-lead alerts"]
+  lead_partner_id varchar(36) [note: "Original sourcing counselor; stays on reassignment"]
+  interested_track_id varchar(100)
+  ai_score integer [note: "0-100 AI lead score"]
+  ai_temperature varchar(10) [note: "hot|warm|cold|frozen"]
+  ai_next_action text
+  ai_call_script text
+  ai_sentiment varchar(15) [default: "unknown", note: "positive|neutral|negative|unknown"]
+  city varchar(100)
+  state varchar(100)
+  area varchar(120) [note: "Granular locality e.g. Adajan Char Rasta"]
+  age integer
+  qualification varchar(200)
+  employment varchar(80) [note: "Free-text occupation (legacy enum: student|employed|unemployed|freelancer)"]
+  budget integer [note: "Budget in INR"]
+  utm_source varchar(100)
+  utm_medium varchar(100)
+  utm_campaign varchar(100)
+  utm_content varchar(100)
+  meta_lead_id varchar(100) [unique]
+  discover10x_report_id varchar(100)
+  religion varchar(20) [note: "hindu|muslim|sikh|christian|jain|other"]
+  preferred_call_slot varchar(50)
+  tags json
+  message text [note: "Backward compat: initial message"]
+  course_interest varchar(100) [note: "Backward compat"]
+  notes text
+  call_count integer [default: 0]
+  last_contacted_at timestamptz
+  next_followup_at timestamptz
+  enrolled_at timestamptz
+  lost_reason varchar(200)
+  last_stale_alert_at timestamptz
+  last_stale_alert_tier smallint
+  last_followup_alert_at timestamptz
+  last_followup_alert_tier smallint
+  stage_entered_at timestamptz
+  previous_stage varchar(30)
+  stage_change_count integer [not null, default: 0]
+  last_stage_change_at timestamptz
+  stale_days integer [note: "Days since stage_entered_at; refreshed nightly"]
+  won_at timestamptz
+  first_response_at timestamptz
+  first_counselor_contact_at timestamptz
+  followup_due_at timestamptz
+  followup_reason_category varchar(30) [note: "exam_over|payday|parent_discussion|budget_ready|course_starts|manual_reminder|custom"]
+  followup_reason_note text
+  followup_source varchar(20) [note: "ai_extracted|counselor_manual|system_auto"]
+  followup_set_at timestamptz
+  followup_snooze_count integer [not null, default: 0]
+  ai_recommended_stage varchar(40)
+  ai_recommended_stage_reason text
+  ai_recommended_stage_confidence float
+  ai_recommended_stage_at timestamptz
+  ai_recommendation_source varchar(30) [note: "rule|signal|llm|hybrid|claude_deep_analysis_v1"]
+  ai_recommendation_accepted_at timestamptz
+  ai_recommendation_overridden_at timestamptz
+  buyer_persona varchar(25)
+  primary_objection varchar(25)
+  objection_history json
+  engagement_state varchar(15)
+  decision_maker varchar(15)
+  primary_motivation varchar(80)
+  parents_phone varchar(15)
+  preferred_language_text varchar(15)
+  financial_signal varchar(20)
+  urgency_signal varchar(15)
+  odoo_lead_id varchar(36)
+  source_system varchar(20)
+  original_stage varchar(40)
+  duplicate_group_id varchar(36)
+  odoo_probability float
+  dob date [note: "Date of birth from offline inquiry form"]
+  school_or_college varchar(200)
+  address text
+  career_start_timeline varchar(40) [note: "immediately|within_1_month|within_3_months|just_exploring|custom"]
+  is_deleted boolean [not null, default: false]
+  deleted_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table lead_interactions {
+  id varchar(36) [pk]
+  lead_id varchar(36) [not null]
+  counselor_id varchar(36)
+  type varchar(20) [not null, note: "call|whatsapp|email|visit|demo|sms|note|stage_change"]
+  direction varchar(10) [not null, default: "outbound", note: "inbound|outbound"]
+  duration_seconds integer
+  summary text
+  outcome varchar(20) [note: "positive|neutral|negative|no_answer|callback"]
+  ai_sentiment_detected varchar(20)
+  recording_url varchar(500)
+  created_at timestamptz
+}
+
+Table lead_ai_scores {
+  id varchar(36) [pk]
+  lead_id varchar(36) [not null]
+  score integer [not null, note: "0-100"]
+  temperature varchar(10) [not null, note: "hot|warm|cold|frozen"]
+  score_breakdown json [note: '{"engagement":45,"recency":30,"intent":25}']
+  model_version varchar(50) [not null]
+  reasoning text
+  scored_at timestamptz [not null]
+  created_at timestamptz
+}
+
+Table lead_stage_recommendations_log {
+  id varchar(36) [pk]
+  lead_id varchar(36) [not null]
+  from_stage varchar(40)
+  to_stage varchar(40) [not null]
+  confidence float [not null, default: 0.0]
+  source varchar(20) [not null, note: "rule|signal|llm"]
+  reason text
+  signals json
+  decision varchar(15) [not null, default: "pending", note: "pending|accepted|overridden|expired"]
+  decided_at timestamptz
+  decided_by_id varchar(36)
+  override_stage varchar(40)
+  override_reason text
+  model_version varchar(50)
+  created_at timestamptz
+}
+
+Table lead_attachments {
+  id varchar(36) [pk]
+  lead_id varchar(36) [not null]
+  uploaded_by_id varchar(36)
+  category varchar(30) [not null, default: "other", note: "aadhar|passport_photo|payment_screenshot|id_proof|other"]
+  filename varchar(255) [not null]
+  file_url varchar(500) [not null]
+  content_type varchar(100) [not null]
+  size_bytes integer [not null, default: 0]
+  note text
+  created_at timestamptz
+}
+
+Table counselor_profiles {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null, unique]
+  conversion_matrix json [not null, default: '{}']
+  overall_conversion_rate float [not null, default: 0.0]
+  total_leads_handled integer [not null, default: 0]
+  total_enrolled integer [not null, default: 0]
+  active_lead_count integer [not null, default: 0]
+  max_capacity integer [not null, default: 50]
+  avg_response_time_hours float
+  centres json [not null, note: '["adajan","vesu"]']
+  languages json [not null, note: '["hindi","gujarati","english"]']
+  narrative_text text
+  narrative_embedding json [note: "1536-dim float array for RAG matching"]
+  profile_version integer [not null, default: 1]
+  last_refreshed_at timestamptz
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table counselor_match_logs {
+  id varchar(36) [pk]
+  lead_id varchar(36) [not null]
+  trigger varchar(30) [not null, note: "lead_created|priya_qualified|manual_request|periodic_reeval"]
+  recommended_counselor_id varchar(36) [not null]
+  assigned_counselor_id varchar(36)
+  match_scores json [not null, note: "[{counselor_id, total_score, breakdown}]"]
+  lead_snapshot json
+  reasoning text
+  was_auto_assigned boolean [not null, default: false]
+  was_overridden boolean [not null, default: false]
+  override_counselor_id varchar(36)
+  override_reason text
+  outcome varchar(20) [note: "enrolled|lost|pending"]
+  created_at timestamptz [not null]
+}
+
+Table campaigns {
+  id varchar(36) [pk]
+  name varchar(200) [not null]
+  description text
+  type varchar(50) [default: "email"]
+  trigger varchar(50) [note: "lead_captured|payment_done|no_contact_48h|status_changed|score_hot|..."]
+  status varchar(20) [not null, default: "draft", note: "draft|active|paused|archived"]
+  target_segment json
+  target_audience json
+  content text
+  subject varchar(200)
+  max_entries_per_lead integer [default: 1, note: "1=once per lead, 0=unlimited"]
+  re_entry_days integer
+  exit_on_enroll boolean [default: true]
+  exit_on_reply boolean [default: false]
+  scheduled_at timestamptz
+  sent_count integer [default: 0]
+  delivered_count integer [default: 0]
+  open_count integer [default: 0]
+  click_count integer [default: 0]
+  conversion_count integer [default: 0]
+  created_by varchar(36)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table campaign_steps {
+  id varchar(36) [pk]
+  campaign_id varchar(36) [not null]
+  step_order integer [not null]
+  delay_hours integer [not null, default: 0]
+  channel varchar(20) [not null, note: "whatsapp|email|sms|counselor_alert"]
+  template_content text [not null]
+  is_ai_generated boolean [default: false]
+  ab_test_variant varchar(5)
+  condition_type varchar(30) [default: "always", note: "always|if_opened|if_replied|if_converted|if_not_opened"]
+  condition_delay_hours integer [default: 0]
+  ai_personalize boolean [default: false]
+  personalization_prompt text
+  condition_if_opened_id varchar(36)
+  condition_if_converted_id varchar(36)
+  created_at timestamptz
+}
+
+Table campaign_executions {
+  id varchar(36) [pk]
+  campaign_id varchar(36) [not null]
+  lead_id varchar(36)
+  student_id varchar(36)
+  current_step_index integer [default: 0]
+  status varchar(20) [not null, default: "active", note: "active|paused|completed|cancelled|failed"]
+  started_at timestamptz
+  completed_at timestamptz
+  next_step_at timestamptz
+  steps_completed json
+  exec_data json
+  created_at timestamptz
+}
+
+Table campaign_step_results {
+  id varchar(36) [pk]
+  execution_id varchar(36) [not null]
+  step_id varchar(36) [not null]
+  executed_at timestamptz
+  channel varchar(20) [not null]
+  status varchar(20) [not null, default: "sent", note: "sent|delivered|failed|skipped"]
+  message_sent text
+  delivery_status varchar(30)
+  opened_at timestamptz
+  replied_at timestamptz
+  converted boolean [default: false]
+  error text
+  ab_variant varchar(5)
+  created_at timestamptz
+}
+
+Table chat_messages {
+  id varchar(36) [pk]
+  lead_id varchar(36) [not null]
+  direction varchar(10) [not null, note: "inbound|outbound"]
+  message_type varchar(20) [not null, default: "text", note: "text|image|document|audio|video|location|button|ai|template"]
+  body text
+  whatsapp_message_id varchar(100) [note: "Meta WA message ID"]
+  status varchar(20) [not null, default: "sent", note: "sent|delivered|read|failed"]
+  sent_by_user_id varchar(36)
+  ai_model varchar(50)
+  ai_confidence float
+  template_name varchar(100)
+  created_at timestamptz
+}
+
+Table ai_conversations {
+  id varchar(36) [pk]
+  lead_id varchar(36) [not null, unique]
+  conversation_state varchar(30) [not null, default: "greeting", note: "greeting|qualifying|nurturing|closing|enrolled|lost"]
+  last_ai_reply text
+  enrichment_data json [note: '{"course_interest":"Python","budget_mentioned":15000}']
+  ai_suggestions json
+  message_count integer [default: 0]
+  last_message_at timestamptz
+  auto_reply_enabled boolean [default: true]
+  dnd boolean [default: false, note: "Do not disturb — stop auto-replies"]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table counselor_tasks {
+  id varchar(36) [pk]
+  lead_id varchar(36) [not null]
+  counselor_id varchar(36) [not null]
+  assigned_by varchar(36)
+  task_type varchar(30) [not null, default: "follow_up", note: "follow_up|call_back|send_info|schedule_demo|visit_reminder|payment_followup|custom"]
+  custom_label varchar(200)
+  description text
+  due_date timestamptz [not null]
+  completed_at timestamptz
+  status varchar(20) [not null, default: "pending", note: "pending|done|cancelled"]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table prompt_versions {
+  id varchar(36) [pk]
+  name varchar(100) [not null]
+  system_prompt text [not null]
+  version integer [not null, default: 1]
+  is_active boolean [not null, default: false]
+  created_by varchar(36)
+  description text
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+
+// ============================================================
+// GROUP 3: Learning
+// ============================================================
+
+Table tracks {
+  id varchar(100) [pk, note: "Slug-style IDs e.g. meta-ads"]
+  name varchar(200) [not null]
+  slug varchar(200) [unique]
+  category varchar(100) [not null, default: "general"]
+  description text
+  price integer [not null, default: 0]
+  price_inr integer
+  discounted_price_inr integer
+  emi_price integer
+  duration varchar(50) [note: "e.g. '12 weeks' — backward compat"]
+  duration_weeks integer
+  duration_days integer
+  difficulty varchar(20) [note: "beginner|intermediate|advanced"]
+  delivery_mode varchar(20) [note: "in_person|online|hybrid"]
+  centre varchar(20) [note: "adajan|vesu|bhestan"]
+  status varchar(20) [not null, default: "active", note: "draft|active|archived"]
+  language varchar(10) [not null, default: "en"]
+  demand_level varchar(30)
+  income_range varchar(50)
+  freelance_income varchar(50)
+  modules_count integer [default: 0]
+  tools json
+  ai_curriculum json
+  thumbnail_url varchar(500)
+  featured boolean [default: false]
+  priority varchar(10)
+  students integer [default: 0]
+  placement_rate integer [default: 0]
+  placement_rate_float float
+  avg_salary_inr integer
+  is_active boolean [default: true]
+  created_by varchar(36)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table modules {
+  id varchar(36) [pk]
+  track_id varchar(100) [not null]
+  name varchar(200) [not null]
+  title varchar(200)
+  description text
+  order_index integer [not null]
+  duration_minutes integer
+  duration_hours float
+  learning_outcomes json
+  is_ai_generated boolean [default: false]
+  is_active boolean [default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table sub_modules {
+  id varchar(36) [pk]
+  module_id varchar(36) [not null]
+  title varchar(200) [not null]
+  description text
+  order_index integer [default: 1]
+  content_type varchar(20) [default: "text", note: "text|video|mixed"]
+  content_body text
+  video_url varchar(500)
+  duration_minutes integer
+  quiz_questions json [note: "[{question, options, correct_answer, explanation}]"]
+  resources json [note: "[{title, url, type}]"]
+  is_active boolean [default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table milestones {
+  id varchar(36) [pk]
+  module_id varchar(36) [not null, unique]
+  badge_name varchar(100) [not null, note: "e.g. HTML Master"]
+  badge_icon varchar(50)
+  xp_reward integer [default: 100]
+  celebration_message text
+  is_active boolean [default: true]
+}
+
+Table tasks {
+  id varchar(36) [pk]
+  module_id varchar(36) [not null]
+  name varchar(200) [not null]
+  description text
+  order_index integer [not null]
+  grading_rubric json
+  max_score integer [default: 100]
+  submission_type varchar(20) [default: "file"]
+}
+
+Table enrollments {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  student_id varchar(36)
+  track_id varchar(100) [not null]
+  batch_id varchar(36)
+  payment_id varchar(36)
+  status varchar(20) [not null, default: "active", note: "active|completed|dropped|paused|transferred"]
+  plan_tier varchar(20) [default: "kit"]
+  enrolled_by varchar(36)
+  fee_paid integer
+  delivery_mode varchar(20) [note: "in_person|online|hybrid"]
+  start_date date
+  expected_end_date date
+  enrolled_at timestamptz
+  completed_at timestamptz
+  progress_percent float [default: 0.0]
+  completion_percentage float [default: 0.0]
+  current_module integer [default: 1]
+  xp integer [default: 0]
+  streak_days integer [default: 0]
+  last_activity timestamptz
+  freeze_count integer [not null, default: 1]
+  freezes_used_this_week integer [not null, default: 0]
+  freezes_week_reset_at timestamptz
+  paused_at timestamptz
+  paused_until timestamptz
+  certificate_url varchar(500)
+  certificate_id varchar(50) [unique]
+  dropout_risk_score integer [note: "0-100"]
+  dropout_risk_updated_at timestamptz
+  seen_at timestamptz [note: "First view in portal — drives one-time welcome banner"]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table progress_records {
+  id varchar(36) [pk]
+  enrollment_id varchar(36) [not null]
+  module_id varchar(36) [not null]
+  status varchar(20) [not null, default: "not_started", note: "not_started|in_progress|completed"]
+  completion_percentage float [default: 0.0]
+  time_spent_minutes integer [default: 0]
+  last_accessed timestamptz
+  completed_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table sub_module_progress {
+  id varchar(36) [pk]
+  enrollment_id varchar(36) [not null]
+  sub_module_id varchar(36) [not null]
+  status varchar(20) [default: "not_started", note: "not_started|in_progress|completed"]
+  quiz_score integer [note: "0-100"]
+  quiz_passed boolean
+  completed_at timestamptz
+}
+
+Table earned_milestones {
+  id varchar(36) [pk]
+  enrollment_id varchar(36) [not null]
+  milestone_id varchar(36) [not null]
+  earned_at timestamptz
+}
+
+Table resources {
+  id varchar(36) [pk]
+  module_id varchar(36)
+  track_id varchar(100)
+  title varchar(200) [not null]
+  description text
+  resource_type varchar(20)
+  url varchar(500)
+  download_count integer [default: 0]
+  is_public boolean [default: false]
+  created_at timestamptz
+}
+
+Table certificates {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  enrollment_id varchar(36) [not null]
+  track_id varchar(100) [not null]
+  certificate_number varchar(50) [unique]
+  final_score integer
+  grade_letter varchar(5)
+  pdf_url varchar(500)
+  verification_url varchar(500)
+  issued_at timestamptz
+}
+
+Table grades {
+  id varchar(36) [pk]
+  submission_id varchar(36) [not null, unique]
+  score integer [not null]
+  max_score integer [default: 100]
+  grade_letter varchar(5)
+  feedback text
+  strengths json
+  improvements json
+  next_steps text
+  graded_by varchar(20) [default: "ai"]
+  reviewer_id varchar(36)
+  created_at timestamptz
+}
+
+
+// ============================================================
+// GROUP 4: Students
+// ============================================================
+
+Table students {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null, unique]
+  phone varchar(15)
+  date_of_birth date
+  city varchar(100)
+  state varchar(100)
+  qualification varchar(200)
+  career_goal text
+  preferred_language varchar(5) [not null, default: "hi", note: "en|hi|gu|ta|te|mr"]
+  learning_style varchar(20) [note: "visual|reading|practical|mixed"]
+  weekly_hours_available integer
+  streak_days integer [not null, default: 0]
+  last_active timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table learner_profile_deep {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null, unique]
+  career_goal text
+  career_goal_structured json [note: '{"role","industry","salary_target_inr","timeline_months"}']
+  current_skill_level json [note: '{"self_rated":"beginner|intermediate|advanced","areas":[...]}']
+  learning_style varchar(20) [note: "visual|reading|practical|mixed"]
+  daily_hours_available float
+  preferred_time varchar(20) [note: "morning|afternoon|evening|night|flexible"]
+  device_primary varchar(20) [note: "smartphone|laptop|tablet|desktop"]
+  internet_quality varchar(20) [note: "high_speed|moderate|slow|offline_needed"]
+  language_preference varchar(5) [not null, default: "hi"]
+  motivation_type varchar(30) [note: "job|salary_hike|freelance|business|skill|certificate"]
+  biggest_challenge text
+  prior_course_experience boolean [default: false]
+  has_laptop boolean [default: true]
+  onboarding_completed boolean [default: false]
+  onboarding_completed_at timestamptz
+  kai_conversation_count integer [default: 0]
+  last_ai_path_generated_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table student_learning_paths {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  enrollment_id varchar(36) [not null]
+  path_data json [not null, note: "Week-by-week AI study plan"]
+  personalization_notes text
+  is_active boolean [default: true]
+  generated_at timestamptz
+  created_at timestamptz
+}
+
+Table student_notes {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  module_id varchar(36) [not null]
+  content text
+  updated_at timestamptz
+  created_at timestamptz
+}
+
+Table achievements {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  badge_id varchar(50) [not null]
+  badge_name varchar(100) [not null]
+  badge_emoji varchar(10)
+  xp_awarded integer [default: 0]
+  earned_at timestamptz
+}
+
+Table badge_catalog {
+  slug varchar(50) [pk]
+  name varchar(100) [not null]
+  emoji varchar(10) [not null]
+  description text
+  category varchar(50) [not null, default: "Progress"]
+  rarity varchar(20) [not null, default: "common", note: "common|rare|epic|legendary"]
+  xp_reward integer [not null, default: 50]
+  trigger_type varchar(40) [note: "submission_first|streak_n|score_perfect|track_complete|community_n|referral_n|speed_burst"]
+  trigger_threshold integer
+  display_order integer [not null, default: 100]
+  is_active boolean [not null, default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table level_config {
+  level integer [pk]
+  xp_required integer [not null]
+  reward_label varchar(200) [not null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table xp_rule {
+  source_key varchar(40) [pk, note: "tasks|quiz|community|streak|attendance|badges"]
+  display_name varchar(80) [not null]
+  display_color varchar(20) [not null, default: "#6B7280"]
+  formula_type varchar(40) [not null, note: "submission_count_plus_score|per_completed_lesson|sum_achievement_xp|community_posts_replies|max_streak_days|days_active_buckets"]
+  unit_value integer [not null, default: 0]
+  base_value integer [not null, default: 0]
+  display_order integer [not null, default: 100]
+  is_active boolean [not null, default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table referral_commissions {
+  id varchar(36) [pk]
+  referrer_id varchar(36) [not null]
+  referred_id varchar(36) [not null]
+  payment_id varchar(36)
+  commission_amount numeric(10,2) [not null]
+  status varchar(20) [default: "pending"]
+  paid_at timestamptz
+  created_at timestamptz
+}
+
+Table audit_responses {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  payment_id varchar(36)
+  answers json [not null]
+  career_score integer
+  matched_tracks json
+  matched_bundle json
+  income_3m varchar(50)
+  income_6m varchar(50)
+  created_at timestamptz
+}
+
+
+// ============================================================
+// GROUP 5: Assessment
+// ============================================================
+
+Table assessments {
+  id varchar(36) [pk]
+  module_id varchar(36)
+  track_id varchar(100)
+  created_by varchar(36)
+  title varchar(200) [not null]
+  type varchar(30) [not null, default: "module_quiz", note: "module_quiz|final_assessment|practice|proctored"]
+  pass_score integer [not null, default: 60]
+  max_attempts integer [not null, default: 2]
+  time_limit_minutes integer
+  instructions text
+  shuffle_questions boolean [not null, default: true]
+  show_answers_after boolean [not null, default: true]
+  grading_mode varchar(20) [not null, default: "ai_primary", note: "ai_primary|human_primary|hybrid"]
+  status varchar(20) [not null, default: "draft", note: "draft|published"]
+  total_marks integer [not null, default: 0]
+  rubric json
+  rubric_generated_by varchar(20) [not null, default: "none", note: "manual|ai|none"]
+  rubric_version integer [not null, default: 0]
+  published_at timestamptz
+  deleted_at timestamptz
+  is_active boolean [default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table questions {
+  id varchar(36) [pk]
+  assessment_id varchar(36) [not null]
+  source_question_bank_id varchar(36)
+  text text [not null]
+  type varchar(20) [not null, default: "mcq", note: "mcq|subjective|true_false|match"]
+  options json
+  correct_answer text
+  explanation text
+  marks integer [not null, default: 1]
+  order_index integer [not null, default: 0]
+  hint text
+  ideal_answer_length_words integer
+  is_active boolean [not null, default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table question_bank {
+  id varchar(36) [pk]
+  track_id varchar(100) [not null]
+  module_id varchar(36)
+  created_by varchar(36)
+  text text [not null]
+  type varchar(20) [not null, default: "mcq", note: "mcq|subjective|true_false|match"]
+  options json
+  correct_answer text
+  explanation text
+  marks integer [not null, default: 1]
+  hint text
+  ideal_answer_length_words integer
+  tags json
+  difficulty varchar(20) [note: "easy|medium|hard"]
+  usage_count integer [not null, default: 0]
+  avg_discrimination_index float
+  is_active boolean [not null, default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table submissions {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  task_id varchar(36)
+  enrollment_id varchar(36)
+  assessment_id varchar(36)
+  submission_text text
+  submission_url varchar(500)
+  file_url varchar(500)
+  file_name varchar(200)
+  attempt_number integer [not null, default: 1]
+  status varchar(30) [not null, default: "submitted", note: "in_progress|submitted|grading|graded|grading_failed|pending_manual_review|disputed"]
+  total_score float
+  grade varchar(5) [note: "A|B|C|D|F"]
+  submitted_at timestamptz
+  graded_at timestamptz
+  graded_by varchar(20) [note: "ai|human|ai_human"]
+  time_taken_seconds integer
+  plagiarism_flag boolean [default: false]
+  plagiarism_score float
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table answers {
+  id varchar(36) [pk]
+  submission_id varchar(36) [not null]
+  question_id varchar(36) [not null]
+  student_answer text
+  selected_option integer
+  is_correct boolean
+  marks_awarded float
+  created_at timestamptz
+}
+
+Table ai_grading_results {
+  id varchar(36) [pk]
+  answer_id varchar(36) [not null, unique]
+  score float [not null]
+  grade varchar(5) [not null]
+  feedback text [not null]
+  strength_noted text
+  improvement_suggestion text
+  rubric_breakdown json
+  model_used varchar(50) [not null]
+  prompt_version varchar(20) [not null]
+  tokens_used integer
+  latency_ms integer
+  human_override_score float
+  human_override_by varchar(36)
+  human_override_reason text
+  created_at timestamptz
+}
+
+Table grade_disputes {
+  id varchar(36) [pk]
+  submission_id varchar(36) [not null]
+  question_id varchar(36) [not null]
+  user_id varchar(36) [not null]
+  reason text [not null]
+  status varchar(20) [not null, default: "pending", note: "pending|under_review|resolved|rejected"]
+  reviewer_id varchar(36)
+  resolution text
+  resolved_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+
+// ============================================================
+// GROUP 6: Finance
+// ============================================================
+
+Table payments {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  razorpay_order_id varchar(100)
+  razorpay_payment_id varchar(100)
+  razorpay_signature varchar(200)
+  amount numeric(10,2) [not null]
+  currency varchar(3) [default: "INR"]
+  item_type varchar(20) [not null]
+  item_id varchar(100)
+  item_name varchar(200)
+  status varchar(20) [default: "created", note: "created|paid|failed|refunded"]
+  coupon_code varchar(50)
+  discount_amount numeric(10,2) [default: 0]
+  payment_method varchar(20)
+  refund_amount numeric(10,2) [default: 0]
+  refund_reason text
+  metadata_json json
+  created_at timestamptz
+  paid_at timestamptz
+}
+
+Table fee_payments {
+  id varchar(36) [pk]
+  enrollment_id varchar(36) [not null]
+  amount numeric(10,2) [not null]
+  payment_method varchar(30) [note: "razorpay|upi|cash|bank_transfer|cheque"]
+  razorpay_order_id varchar(100)
+  razorpay_payment_id varchar(100) [unique]
+  razorpay_signature varchar(200)
+  status varchar(20) [not null, default: "pending", note: "pending|paid|failed|refunded"]
+  paid_at timestamptz
+  receipt_url varchar(500)
+  notes text
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table emi_plans {
+  id varchar(36) [pk]
+  enrollment_id varchar(36) [not null]
+  total_amount numeric(10,2) [not null]
+  installments_count integer [not null, default: 3]
+  frequency varchar(20) [not null, default: "monthly", note: "weekly|monthly|quarterly"]
+  mandate_id varchar(100) [note: "Razorpay mandate/subscription ID"]
+  status varchar(20) [not null, default: "active", note: "active|completed|defaulted|cancelled"]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table emi_installments {
+  id varchar(36) [pk]
+  emi_plan_id varchar(36) [not null]
+  installment_number integer [not null]
+  amount numeric(10,2) [not null]
+  due_date date [not null]
+  paid_at timestamptz
+  status varchar(20) [not null, default: "upcoming", note: "upcoming|due|paid|overdue|failed"]
+  razorpay_payment_id varchar(100)
+  receipt_url varchar(500)
+  created_at timestamptz
+}
+
+Table invoices {
+  id varchar(36) [pk]
+  enrollment_id varchar(36) [not null]
+  invoice_number varchar(50) [not null, unique]
+  invoice_type varchar(20) [not null, default: "standard", note: "standard|gst"]
+  amount numeric(10,2) [not null]
+  gst_amount numeric(10,2)
+  total_amount numeric(10,2)
+  status varchar(20) [not null, default: "generated", note: "generated|sent|paid|overdue"]
+  pdf_url varchar(500)
+  sent_at timestamptz
+  generated_by varchar(36)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table coupons {
+  id varchar(36) [pk]
+  code varchar(50) [not null, unique]
+  discount_type varchar(10) [default: "percent", note: "percent|flat"]
+  discount_value integer [not null]
+  min_order integer [default: 0]
+  max_discount integer
+  max_uses integer [default: 100]
+  used_count integer [default: 0]
+  valid_from timestamptz
+  valid_until timestamptz
+  applicable_tracks json
+  is_active boolean [default: true]
+  created_at timestamptz
+}
+
+Table scholarship_schemes {
+  id varchar(36) [pk]
+  name varchar(200) [not null]
+  description text
+  scholarship_type varchar(30) [not null, default: "need_based", note: "merit|need_based|early_bird|referral|special"]
+  max_discount_percent float [not null]
+  max_discount_inr integer
+  total_budget_inr integer [not null]
+  max_awards integer [not null, default: 10]
+  awarded_count integer [not null, default: 0]
+  disbursed_inr float [not null, default: 0]
+  valid_from timestamptz [not null]
+  valid_until timestamptz
+  applicable_tracks json
+  auto_approve_below_score integer
+  created_by varchar(36)
+  is_active boolean [not null, default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table scholarship_applications {
+  id varchar(36) [pk]
+  scheme_id varchar(36) [not null]
+  enrollment_id varchar(36) [not null]
+  student_user_id varchar(36) [not null]
+  requested_discount_percent float
+  approved_discount_percent float
+  approved_discount_inr integer
+  monthly_household_income integer
+  employment_status varchar(30)
+  prior_education text
+  personal_statement text
+  career_goals text
+  ai_score integer
+  ai_recommendation varchar(20) [note: "approve|review|reject"]
+  ai_rationale text
+  ai_dim_financial_need integer
+  ai_dim_academic_potential integer
+  ai_dim_statement_quality integer
+  ai_dim_goal_alignment integer
+  ai_dim_timing_fit integer
+  is_ai_generated boolean [not null, default: false]
+  status varchar(20) [not null, default: "pending", note: "pending|approved|rejected"]
+  reviewer_id varchar(36)
+  reviewer_notes text
+  reviewed_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table scholarships {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  track_id varchar(100) [not null]
+  discount_amount numeric(10,2)
+  discount_percent float
+  reason text
+  approved_by varchar(36)
+  status varchar(20) [not null, default: "applied", note: "applied|approved|rejected"]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table refunds {
+  id varchar(36) [pk]
+  enrollment_id varchar(36) [not null]
+  amount numeric(10,2) [not null]
+  approved_amount numeric(10,2)
+  reason text
+  refund_type varchar(30) [not null, default: "standard", note: "standard|satisfaction_7day|job_guarantee"]
+  status varchar(20) [not null, default: "requested", note: "requested|under_review|approved|rejected|processing|processed"]
+  reviewer_note text
+  reviewed_by varchar(36)
+  reviewed_at timestamptz
+  processed_by varchar(36)
+  processed_at timestamptz
+  razorpay_refund_id varchar(100)
+  payment_mode varchar(20) [note: "razorpay|cash|bank_transfer"]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table revenue_forecasts {
+  id varchar(36) [pk]
+  generated_at timestamptz [not null]
+  period_days integer [not null, default: 90]
+  centre varchar(20) [note: "null = all centres"]
+  forecast_data json [not null, note: "daily_forecast + summary JSON"]
+  model_used varchar(50) [not null, default: "rule_based"]
+  is_ai_generated boolean [not null, default: false]
+  created_at timestamptz
+}
+
+Table document_sequences {
+  id varchar(36) [pk]
+  centre_code varchar(10) [not null, note: "ADJ|VES|BHE|ONL|ALL"]
+  year integer [not null]
+  doc_type varchar(10) [not null, note: "INV|REC|EMI"]
+  last_sequence integer [not null, default: 0]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+
+// ============================================================
+// GROUP 7: Placement
+// ============================================================
+
+Table employers {
+  id varchar(36) [pk]
+  name varchar(200) [not null]
+  website varchar(500)
+  industry varchar(100)
+  city varchar(100)
+  contact_name varchar(100)
+  contact_email varchar(200)
+  contact_phone varchar(15)
+  logo_url varchar(500)
+  description text
+  about_company text
+  company_size varchar(50) [note: "1-10|11-50|51-200|201-500|500+"]
+  linkedin_url varchar(500)
+  hiring_contact_name varchar(100)
+  hiring_contact_phone varchar(15)
+  hiring_since date
+  total_hires_from_easyskill integer [default: 0]
+  rating float [note: "Internal EasySkill rating 1-5"]
+  rating_note text
+  verification_date date
+  verification_status varchar(30) [not null, default: "pending_verification", note: "pending_verification|verified|rejected|suspended"]
+  user_id varchar(36) [note: "Linked User for employer portal login"]
+  verified boolean [default: false]
+  onboarded_at timestamptz
+  onboarded_by varchar(36)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table job_listings {
+  id varchar(36) [pk]
+  employer_id varchar(36) [not null]
+  title varchar(200) [not null]
+  description text
+  requirements json
+  skills_required json
+  salary_min integer
+  salary_max integer
+  location varchar(100)
+  remote_ok boolean [default: false]
+  work_type varchar(20) [default: "on_site", note: "remote|hybrid|on_site"]
+  responsibilities json
+  skills_preferred json
+  experience_min_years float [default: 0.0]
+  experience_max_years float
+  employment_type varchar(20) [default: "full_time", note: "full_time|part_time|contract|internship"]
+  openings_count integer [default: 1]
+  application_deadline date
+  source varchar(30) [default: "direct", note: "direct|justnaukri|other"]
+  status varchar(20) [not null, default: "open", note: "open|closed"]
+  expires_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table job_applications {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  job_listing_id varchar(36) [not null]
+  status varchar(20) [not null, default: "pending", note: "pending|interviewing|offered|rejected|accepted"]
+  applied_at timestamptz
+  resume_url varchar(500)
+  resume_id varchar(36) [note: "FK generated_resumes.id; SET NULL on delete"]
+  cover_letter_ai text
+  interview_date timestamptz
+  outcome varchar(20)
+  notes text
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table job_matches {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  job_listing_id varchar(36) [not null]
+  match_score integer [not null, note: "0-100"]
+  skill_gaps json
+  dimension_scores json [note: "{skill,experience,academic,location,salary} 0-100"]
+  match_reasoning text
+  skill_gap_report json
+  tailored_resume_url varchar(500)
+  generated_at timestamptz
+  is_ai_generated boolean [default: true]
+  created_at timestamptz
+}
+
+Table generated_resumes {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  target_role varchar(200) [not null]
+  target_company_type varchar(100)
+  style varchar(30) [not null, default: "modern"]
+  version integer [not null, default: 1, note: "Monotonically increasing per student+role; max 10"]
+  resume_json json [not null, note: "{name,email,city,summary,skills[],experience[],education,ats_issues[],ats_suggestions[]}"]
+  ats_score integer [note: "0-100"]
+  is_ai_generated boolean [not null, default: true]
+  public_slug varchar(64) [unique, note: "NULL when private"]
+  is_public boolean [not null, default: false]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table student_portfolios {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  track_id varchar(100)
+  project_title varchar(200) [not null]
+  description text
+  skills_demonstrated json
+  artefact_url varchar(500)
+  public_url varchar(500)
+  employer_visible boolean [default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table employer_interactions {
+  id varchar(36) [pk]
+  employer_id varchar(36) [not null]
+  logged_by varchar(36)
+  type varchar(20) [not null, note: "call|email|whatsapp|meeting"]
+  summary text [not null]
+  outcome varchar(20) [not null, default: "neutral", note: "positive|neutral|negative"]
+  next_followup_at timestamptz
+  occurred_at timestamptz
+  created_at timestamptz
+}
+
+Table mock_interview_sessions {
+  id varchar(36) [pk]
+  prep_plan_id varchar(36) [note: "Nullable — track-scoped sessions have no prep plan"]
+  student_id varchar(36) [not null]
+  track_id varchar(100) [note: "For portal-driven track-scoped mock interviews"]
+  sitting_id varchar(36) [note: "Groups all rows from a single /start to /submit-answer flow"]
+  question_index integer [not null]
+  question_text text [not null]
+  question_type varchar(20) [not null, note: "technical|behavioural|gap"]
+  student_answer text [not null]
+  score integer [note: "0-100"]
+  what_was_good text
+  what_was_missing text
+  delivery_feedback text
+  improved_answer_framework text
+  interviewer_reaction varchar(20) [note: "positive|neutral|concerned"]
+  follow_up_question text
+  is_ai_generated boolean [default: true]
+  answered_at timestamptz
+  created_at timestamptz
+}
+
+Table interview_prep_plans {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  job_listing_id varchar(36) [not null]
+  status varchar(20) [not null, default: "generating", note: "generating|ready|failed"]
+  company_research_points json
+  role_clarity text
+  technical_questions json
+  behavioural_questions json
+  gap_questions json
+  questions_to_ask_interviewer json
+  opening_pitch text
+  red_flags_to_avoid json
+  confidence_tips json
+  self_intro_confident text
+  self_intro_humble text
+  self_intro_storytelling text
+  salary_advice json
+  readiness_score integer [note: "0-100"]
+  last_practiced_at timestamptz
+  mock_attempts_count integer [default: 0]
+  is_ai_generated boolean [default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table placement_outcomes {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  enrollment_id varchar(36)
+  job_listing_id varchar(36)
+  employer_id varchar(36)
+  application_id varchar(36)
+  company_name varchar(200) [not null]
+  role_title varchar(200) [not null]
+  salary_inr integer [not null, note: "Monthly salary in INR"]
+  joining_date date [not null]
+  work_type varchar(20) [not null, default: "on_site"]
+  location varchar(200)
+  placement_type varchar(20) [not null, default: "portal", note: "direct|referral|portal|campus|other"]
+  notes text
+  offer_letter_url varchar(500)
+  days_to_placement integer
+  verified boolean [not null, default: false]
+  verified_by varchar(36)
+  verified_at timestamptz
+  verification_note text
+  success_story_id varchar(36)
+  job_guarantee_fulfilled boolean [not null, default: false]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table success_stories {
+  id varchar(36) [pk]
+  placement_outcome_id varchar(36) [not null, unique]
+  student_id varchar(36) [not null]
+  story_text text
+  tagline varchar(300)
+  quote text
+  is_ai_generated boolean [not null, default: true]
+  status varchar(20) [not null, default: "draft", note: "draft|pending_review|published|rejected"]
+  approved_by varchar(36)
+  approved_at timestamptz
+  published_at timestamptz
+  edited_story_text text
+  edited_tagline varchar(300)
+  edited_quote text
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table justnaukri_sync {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null, unique]
+  justnaukri_candidate_id varchar(100)
+  sync_status varchar(20) [not null, default: "pending", note: "pending|synced|failed|not_eligible"]
+  last_profile_update_at timestamptz
+  synced_at timestamptz
+  last_error text
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table jobs {
+  id varchar(36) [pk, note: "Legacy jobs table — see job_listings for placement"]
+  employer_id varchar(36) [not null]
+  title varchar(200) [not null]
+  description text
+  company_name varchar(200)
+  location varchar(100)
+  job_type varchar(30)
+  salary_range varchar(100)
+  required_skills json
+  required_tracks json
+  min_score integer [default: 0]
+  applications_count integer [default: 0]
+  status varchar(20) [default: "active"]
+  created_at timestamptz
+}
+
+
+// ============================================================
+// GROUP 8: Community
+// ============================================================
+
+Table community_posts {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  title varchar(300) [not null]
+  content text [not null]
+  category varchar(50) [default: "general"]
+  tag varchar(60) [note: "Topic chip e.g. Meta Ads, Copywriting"]
+  is_solved boolean [not null, default: false]
+  vote_count integer [not null, default: 0, note: "Cached net score up-down"]
+  likes_count integer [default: 0]
+  replies_count integer [default: 0]
+  is_pinned boolean [default: false]
+  created_at timestamptz
+}
+
+Table community_replies {
+  id varchar(36) [pk]
+  post_id varchar(36) [not null]
+  user_id varchar(36) [not null]
+  content text [not null]
+  likes_count integer [default: 0]
+  is_accepted boolean [not null, default: false, note: "Original poster marks as accepted answer"]
+  created_at timestamptz
+}
+
+Table community_post_votes {
+  id varchar(36) [pk]
+  post_id varchar(36) [not null, note: "CASCADE delete"]
+  user_id varchar(36) [not null, note: "CASCADE delete"]
+  direction varchar(4) [not null, note: "up|down"]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table study_buddy_opt_ins {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null, unique, note: "CASCADE delete"]
+  track_id varchar(100)
+  preferred_study_time varchar(60)
+  timezone_offset integer [default: 330, note: "Minutes from UTC; default IST"]
+  city varchar(100)
+  is_active boolean [not null, default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table study_groups {
+  id varchar(36) [pk]
+  name varchar(200) [not null]
+  track_id varchar(100)
+  created_by varchar(36) [not null]
+  max_members integer [default: 10]
+  member_count integer [default: 1]
+  members json
+  is_active boolean [default: true]
+  created_at timestamptz
+}
+
+Table support_tickets {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  subject varchar(200) [not null]
+  message text [not null]
+  category varchar(50) [default: "general"]
+  status varchar(20) [default: "open", note: "open|in_progress|resolved|closed"]
+  assigned_to varchar(36)
+  resolution text
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table support_ticket_messages {
+  id varchar(36) [pk]
+  ticket_id varchar(36) [not null, note: "CASCADE delete"]
+  sender_id varchar(36) [not null]
+  body text [not null]
+  created_at timestamptz
+}
+
+
+// ============================================================
+// GROUP 9: Communication
+// ============================================================
+
+Table notifications {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  type varchar(30) [not null]
+  title varchar(200) [not null]
+  message text
+  action_url varchar(300)
+  is_read boolean [default: false]
+  created_at timestamptz
+}
+
+Table notification_configs {
+  id varchar(36) [pk]
+  event_name varchar(100) [not null, unique]
+  description text
+  category varchar(50) [not null, default: "system"]
+  channels_enabled json [not null, note: "{sse: bool, whatsapp: bool, email: bool}"]
+  recipient_roles json [not null]
+  template_whatsapp text
+  template_email_subject varchar(500)
+  cooldown_minutes integer [not null, default: 0]
+  is_enabled boolean [not null, default: true]
+  updated_by varchar(100)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table broadcast_audience_groups {
+  id varchar(36) [pk]
+  name varchar(100) [not null]
+  description text
+  filter_type varchar(10) [not null, default: "smart", note: "smart|manual"]
+  filters json [not null, note: '{"status":[],"centre":"vesu","source":"meta_ad","ai_temperature":"hot","score_min":50}']
+  lead_ids json [not null, note: "Array of lead UUIDs for manual groups"]
+  recipient_count integer [not null, default: 0]
+  created_by varchar(36) [not null]
+  is_shared boolean [not null, default: false]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table whatsapp_templates {
+  id varchar(36) [pk]
+  meta_template_id varchar(64) [note: "null while LOCAL_DRAFT"]
+  name varchar(512) [not null]
+  language varchar(16) [not null, default: "en"]
+  category varchar(32) [not null, default: "MARKETING", note: "MARKETING|UTILITY|AUTHENTICATION"]
+  status varchar(32) [not null, default: "LOCAL_DRAFT", note: "LOCAL_DRAFT|PENDING|APPROVED|REJECTED|FLAGGED|PAUSED|DISABLED|DELETED_REMOTE"]
+  components_json json [not null, note: "Meta components array [{type:BODY,text:...}]"]
+  variables_mapping json [note: '{"1":"lead.name","2":"lead.course_interest"}']
+  quality_score varchar(16) [note: "GREEN|YELLOW|RED|UNKNOWN"]
+  rejection_reason text
+  last_synced_at timestamptz
+  created_by varchar(36)
+  created_at timestamptz
+  updated_at timestamptz
+  deleted_at timestamptz [note: "Soft delete"]
+}
+
+Table whatsapp_template_events {
+  id varchar(36) [pk]
+  template_id varchar(36) [not null, note: "CASCADE delete"]
+  event varchar(32) [not null, note: "APPROVED|REJECTED|FLAGGED|PAUSED|DISABLED|SYNCED|CREATED|DELETED"]
+  reason text
+  payload_json json [note: "Raw Meta webhook payload for forensic replay"]
+  received_at timestamptz [not null]
+}
+
+Table whatsapp_logs {
+  id varchar(36) [pk]
+  phone varchar(15) [not null]
+  template varchar(100)
+  message text
+  direction varchar(10) [default: "outbound"]
+  status varchar(20) [default: "sent"]
+  sent_by varchar(36)
+  error_message text
+  created_at timestamptz
+}
+
+Table batch_communications {
+  id varchar(36) [pk]
+  batch_id varchar(36) [not null]
+  sent_by varchar(36) [not null]
+  type varchar(30) [not null, note: "announcement|reminder|resource_share|individual|homework|motivate"]
+  channel varchar(20) [not null, default: "whatsapp", note: "whatsapp|in_app|both"]
+  message text [not null]
+  attachment_url varchar(500)
+  target_student_id varchar(36)
+  resource_id varchar(36)
+  session_id varchar(36)
+  recipient_count integer [not null, default: 0]
+  delivered_count integer [not null, default: 0]
+  read_count integer [not null, default: 0]
+  scheduled_at timestamptz
+  sent_at timestamptz [not null]
+  is_sent boolean [not null, default: true]
+  created_at timestamptz
+}
+
+Table batch_communication_recipients {
+  id varchar(36) [pk]
+  communication_id varchar(36) [not null]
+  student_id varchar(36)
+  user_id varchar(36)
+  name varchar(200)
+  phone varchar(20)
+  recipient_type varchar(20) [not null, default: "student", note: "student|parent"]
+  delivered boolean [not null, default: false]
+  read boolean [not null, default: false]
+  delivered_at timestamptz
+  created_at timestamptz
+}
+
+Table faculty_student_flags {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  batch_id varchar(36)
+  flagged_by varchar(36) [not null]
+  reason text [not null]
+  urgency varchar(20) [not null, default: "normal", note: "normal|urgent"]
+  resolved boolean [not null, default: false]
+  resolution_note text
+  resolved_at timestamptz
+  created_at timestamptz
+}
+
+
+// ============================================================
+// GROUP 10: AI & Config
+// ============================================================
+
+Table kai_conversations {
+  id varchar(36) [pk]
+  conversation_id varchar(36) [not null, note: "Groups messages into a session"]
+  student_id varchar(36) [not null]
+  role varchar(10) [not null, note: "user|assistant"]
+  content text [not null]
+  retrieved_chunks json
+  attachments json
+  suggested_followups json
+  tokens_used integer [default: 0]
+  latency_ms integer [default: 0]
+  escalation_triggered boolean [default: false]
+  task_id varchar(36) [note: "Populated for task workspace AI Help sessions"]
+  title varchar(200) [note: "Auto-derived for task-help; null for ad-hoc chats"]
+  created_at timestamptz
+}
+
+Table kai_attachments {
+  id varchar(36) [pk]
+  conversation_id varchar(36)
+  message_id varchar(36) [note: "FK kai_conversations.id"]
+  student_id varchar(36) [not null]
+  filename varchar(255) [not null]
+  file_url varchar(500) [not null]
+  content_type varchar(100) [not null]
+  size_bytes integer [not null]
+  file_type varchar(20) [not null, note: "image|document"]
+  extracted_text text
+  created_at timestamptz
+}
+
+Table knowledge_chunks {
+  id varchar(36) [pk]
+  source_type varchar(30) [not null, note: "track_content|module_content|faq|placement_story|industry_guide|tool_tutorial|job_market_data"]
+  source_id varchar(36)
+  title varchar(500) [not null]
+  content text [not null]
+  embedding json [note: "1536-dim pgvector embedding (JSON in SQLite dev)"]
+  language varchar(5) [not null, default: "en"]
+  track_id varchar(100)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table ai_usage_cap_policy {
+  id integer [pk]
+  name varchar(64) [not null, unique, default: "default"]
+  daily_credit_cap integer [not null, default: 200]
+  weekly_credit_cap integer [not null, default: 1000]
+  credit_unit_inr numeric(8,4) [not null, default: 0.10]
+  warning_threshold_pct integer [not null, default: 80]
+  feature_costs json [not null, note: "{kai_chat:1,mentor_chat:1,mock_interview_answer:1,resume_generation:10,tailored_resume:10}"]
+  is_active boolean [not null, default: true]
+  updated_by_user_id varchar(36)
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table feature_flags {
+  id varchar(36) [pk]
+  name varchar(100) [not null, unique]
+  display_name varchar(200) [not null]
+  description text
+  category varchar(50) [not null, default: "ai", note: "ai|integrations|student_portal|hr|experimental"]
+  enabled_globally boolean [not null, default: true]
+  enabled_per_centre json [not null, note: '{"adajan":true,"vesu":false}']
+  enabled_per_role json [not null, note: '{"super_admin":true,"counselor":false}']
+  daily_cost_limit_inr float [not null, default: 0.0]
+  daily_cost_used_inr float [not null, default: 0.0]
+  monthly_cost_limit_inr float [not null, default: 0.0]
+  monthly_cost_used_inr float [not null, default: 0.0]
+  auto_disable_on_limit boolean [not null, default: false]
+  last_toggled_at timestamptz
+  last_toggled_by varchar(100)
+  toggle_count integer [not null, default: 0]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table ai_model_configs {
+  id varchar(36) [pk]
+  feature_name varchar(100) [not null, unique, note: "e.g. resume_screener|cohort_analysis|counselor_insights"]
+  display_name varchar(200) [not null]
+  model_id varchar(100) [not null, default: "gpt-4o-mini"]
+  temperature float [not null, default: 0.4]
+  max_tokens integer [not null, default: 1500]
+  top_p float [not null, default: 1.0]
+  cost_per_1k_tokens_inr float [not null, default: 0.12]
+  notes text
+  updated_by varchar(100)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table ai_system_prompts {
+  id varchar(36) [pk]
+  feature_name varchar(100) [not null]
+  version integer [not null, default: 1]
+  prompt_text text [not null]
+  is_active boolean [not null, default: false]
+  test_input text
+  test_output text
+  tested_at timestamptz
+  created_by varchar(100)
+  change_notes text
+  created_at timestamptz
+}
+
+Table nl_query_logs {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  question text [not null]
+  interpreted_as text
+  chart_type varchar(20)
+  row_count integer
+  execution_time_ms integer
+  success boolean [not null, default: true]
+  error_reason varchar(200)
+  intent_json json
+  centre varchar(100)
+  executed_at timestamptz [not null]
+  created_at timestamptz
+}
+
+Table saved_queries {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null]
+  name varchar(200) [not null]
+  description text
+  question text [not null]
+  category varchar(50) [note: "revenue|leads|students|placement|hr|custom"]
+  intent_json json
+  last_run_at timestamptz
+  run_count integer [not null, default: 0]
+  created_at timestamptz
+}
+
+Table centre_configs {
+  id varchar(36) [pk]
+  name varchar(50) [not null, unique, note: "adajan|vesu|bhestan"]
+  display_name varchar(200) [not null]
+  address text
+  city varchar(100) [default: "Surat"]
+  state varchar(100) [default: "Gujarat"]
+  pincode varchar(10)
+  phone varchar(20)
+  whatsapp_number varchar(20)
+  email varchar(200)
+  google_maps_url text
+  operating_hours json [not null, note: "{day:{open:HH:MM,close:HH:MM,is_closed:bool}}"]
+  capacity integer [not null, default: 100]
+  centre_manager_id varchar(36)
+  centre_manager_name varchar(200)
+  is_active boolean [not null, default: true]
+  late_arrival_tolerance_minutes integer [not null, default: 15]
+  qr_attendance_enabled boolean [not null, default: true]
+  local_pricing_overrides json [not null, note: "{track_id:{price:int,reason:str}}"]
+  updated_by varchar(100)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table pricing_tiers {
+  id varchar(36) [pk]
+  name varchar(200) [not null]
+  description text
+  discount_pct float [not null, default: 0.0, note: "Negative = premium"]
+  eligibility_criteria json [not null]
+  is_active boolean [not null, default: true]
+  created_by varchar(100)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table global_settings {
+  id integer [pk, default: 1, note: "Singleton — always id=1"]
+  pricing json [not null]
+  gst json [not null]
+  updated_by varchar(100)
+  updated_at timestamptz
+}
+
+Table brand_configs {
+  id integer [pk, default: 1, note: "Singleton — always id=1"]
+  academy_name varchar(300) [not null, default: "EasySkill Career Academy"]
+  tagline varchar(500)
+  logo_url text
+  primary_color varchar(10) [not null, default: "4F46E5"]
+  secondary_color varchar(10) [not null, default: "059669"]
+  founder_name varchar(200) [not null, default: "Smit Savani"]
+  founder_title varchar(200) [not null]
+  founder_signature_url text
+  contact_email varchar(200)
+  contact_phone varchar(20)
+  address_line1 text
+  address_line2 text
+  city varchar(100) [default: "Surat"]
+  state varchar(100) [default: "Gujarat"]
+  pincode varchar(10)
+  website_url varchar(300)
+  gstin varchar(20)
+  bank_name varchar(200)
+  bank_account_number varchar(50)
+  bank_ifsc varchar(20)
+  updated_by varchar(100)
+  updated_at timestamptz
+}
+
+Table system_announcements {
+  id varchar(36) [pk]
+  title varchar(300) [not null]
+  message text [not null]
+  type varchar(20) [not null, default: "info", note: "info|warning|maintenance"]
+  target_roles json [not null, note: "[] = all roles"]
+  show_from timestamptz [not null]
+  show_until timestamptz
+  is_dismissable boolean [not null, default: true]
+  is_active boolean [not null, default: true]
+  created_by varchar(100)
+  created_at timestamptz
+}
+
+Table platform_settings {
+  key varchar(100) [pk]
+  value text [not null]
+  updated_at timestamptz
+  updated_by varchar(36)
+}
+
+// ============================================================
+// GROUP 11: Batches & Sessions (Faculty)
+// ============================================================
+
+Table batches {
+  id varchar(36) [pk]
+  track_id varchar(100) [not null]
+  faculty_id varchar(36)
+  name varchar(200) [not null]
+  centre varchar(20) [note: "adajan|vesu|bhestan|online"]
+  start_date date
+  end_date date
+  max_students integer
+  enrolled_count integer [default: 0]
+  status varchar(20) [not null, default: "planning", note: "planning|open|running|completed"]
+  schedule json [note: '[{"day":"Mon","time":"10:00-12:00"}]']
+  delivery_mode varchar(20) [default: "in_person"]
+  zoom_link varchar(500)
+  whatsapp_group_link varchar(500)
+  cohort_tag varchar(100)
+  notes text
+  timing varchar(50)
+  description text
+  is_active boolean [default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table batch_enrollments {
+  id varchar(36) [pk]
+  batch_id varchar(36) [not null]
+  enrollment_id varchar(36) [not null]
+  joined_at timestamptz
+  created_at timestamptz
+}
+
+Table sessions {
+  id varchar(36) [pk]
+  batch_id varchar(36) [not null]
+  title varchar(200) [not null]
+  session_number integer
+  module_id varchar(36)
+  scheduled_at timestamptz [not null]
+  duration_minutes integer [default: 120]
+  zoom_link varchar(500)
+  recording_url varchar(500)
+  faculty_notes text
+  actual_start_at timestamptz
+  actual_end_at timestamptz
+  attendance_taken boolean [not null, default: false]
+  session_plan json [note: "Agenda, objectives, resources_to_cover, homework"]
+  post_session_notes json [note: "what_went_well, difficult_topics, students_needing_support"]
+  ai_session_summary text
+  status varchar(20) [not null, default: "scheduled", note: "scheduled|in_progress|completed|cancelled"]
+  notes text
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table session_attendance {
+  id varchar(36) [pk]
+  session_id varchar(36) [not null]
+  student_id varchar(36) [not null]
+  batch_id varchar(36)
+  status varchar(20) [not null, default: "present", note: "present|absent|late|excused"]
+  marked_by varchar(36)
+  marked_at timestamptz
+  parent_excused boolean [not null, default: false]
+  notes text
+  created_at timestamptz
+}
+
+Table live_sessions {
+  id varchar(36) [pk]
+  title varchar(200) [not null]
+  description text
+  track_id varchar(100)
+  batch_id varchar(36)
+  host_name varchar(100)
+  scheduled_at timestamptz [not null]
+  duration_minutes integer [default: 60]
+  meeting_url varchar(500)
+  recording_url varchar(500)
+  status varchar(20) [default: "scheduled"]
+  attendee_count integer [default: 0]
+  created_at timestamptz
+}
+
+// ============================================================
+// GROUP 12: HR
+// ============================================================
+
+Table staff {
+  id varchar(36) [pk]
+  user_id varchar(36) [not null, unique]
+  department varchar(50) [note: "counseling|academics|operations|marketing|tech"]
+  designation varchar(100)
+  salary_inr numeric(10,2)
+  hubstaff_user_id varchar(50)
+  hubstaff_consent boolean [not null, default: false]
+  hubstaff_consented_at timestamptz
+  joining_date date
+  reporting_to varchar(36)
+  is_active boolean [default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table attendance_records {
+  id varchar(36) [pk]
+  staff_id varchar(36) [not null]
+  date date [not null]
+  check_in timestamptz
+  check_out timestamptz
+  status varchar(20) [not null, default: "present", note: "present|absent|late|half_day|leave"]
+  hours_worked float
+  location varchar(50) [note: "adajan|vesu|bhestan|remote"]
+  marked_by varchar(36)
+  created_at timestamptz
+}
+
+Table hubstaff_activities {
+  id varchar(36) [pk]
+  staff_id varchar(36) [not null]
+  date date [not null]
+  active_minutes integer [not null, default: 0]
+  total_minutes integer [not null, default: 0]
+  screenshots_count integer [not null, default: 0]
+  apps_used json
+  raw_data json
+  created_at timestamptz
+}
+
+Table integrity_scores {
+  id varchar(36) [pk]
+  staff_id varchar(36) [not null]
+  date date [not null]
+  score integer [not null, note: "0-100"]
+  components json [note: '{"attendance":90,"productivity":85,"response_time":70}']
+  flags json [note: '["late_3_times","low_calls"]']
+  reviewed_by varchar(36)
+  resolution text
+  created_at timestamptz
+}
+
+Table leave_requests {
+  id varchar(36) [pk]
+  staff_id varchar(36) [not null]
+  type varchar(20) [not null, note: "casual|sick|earned|maternity|unpaid"]
+  from_date date [not null]
+  to_date date [not null]
+  reason text
+  status varchar(20) [not null, default: "pending", note: "pending|approved|rejected|cancelled"]
+  approved_by varchar(36)
+  approved_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table leave_balances {
+  id varchar(36) [pk]
+  staff_id varchar(36) [not null]
+  year integer [not null]
+  casual_total integer [not null, default: 15]
+  sick_total integer [not null, default: 10]
+  earned_total integer [not null, default: 12]
+  casual_used integer [not null, default: 0]
+  sick_used integer [not null, default: 0]
+  earned_used integer [not null, default: 0]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table public_holidays {
+  id varchar(36) [pk]
+  date date [not null]
+  name varchar(100) [not null]
+  applicable_to varchar(20) [not null, default: "all", note: "all|adajan|vesu|bhestan"]
+  created_by varchar(36)
+  created_at timestamptz
+}
+
+Table job_postings {
+  id varchar(36) [pk, note: "HR internal job postings"]
+  title varchar(200) [not null]
+  department varchar(50) [not null]
+  centre varchar(50) [not null]
+  employment_type varchar(30) [not null]
+  salary_range_min_inr integer
+  salary_range_max_inr integer
+  description text
+  requirements json
+  responsibilities json
+  status varchar(20) [not null, default: "draft", note: "draft|open|on_hold|closed"]
+  closing_date date
+  posted_at timestamptz
+  created_by varchar(36)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table recruitment_applications {
+  id varchar(36) [pk]
+  job_id varchar(36) [not null]
+  applicant_name varchar(200) [not null]
+  email varchar(200)
+  phone varchar(20)
+  current_company varchar(200)
+  current_designation varchar(200)
+  notice_period_days integer
+  expected_salary_inr integer
+  cover_letter text
+  resume_url varchar(500)
+  status varchar(30) [not null, default: "applied", note: "applied|screening|shortlisted|interview_scheduled|interviewed|offer_sent|hired|rejected"]
+  ai_score float [note: "0-100"]
+  ai_recommendation varchar(20) [note: "shortlist|consider|reject"]
+  ai_screening_result json
+  screened_at timestamptz
+  offer_letter_url varchar(500)
+  offer_expires_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+// ============================================================
+// GROUP 13: Parent Portal
+// ============================================================
+
+Table parent_student_links {
+  id varchar(36) [pk]
+  parent_user_id varchar(36) [not null]
+  student_id varchar(36) [not null]
+  relationship varchar(20) [not null, default: "guardian", note: "mother|father|guardian"]
+  is_primary boolean [not null, default: true]
+  consent_given boolean [not null, default: false]
+  consent_at timestamptz
+  language_preference varchar(5) [not null, default: "hi"]
+  parent_name varchar(200)
+  parent_phone varchar(20)
+  whatsapp_number varchar(20)
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table parent_narrative_cache {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  language varchar(5) [not null, default: "hi"]
+  narrative text [not null]
+  generated_at timestamptz [not null]
+  cache_date date [not null]
+}
+
+Table absence_notes {
+  id varchar(36) [pk]
+  student_id varchar(36) [not null]
+  reported_by varchar(36) [not null]
+  absence_date date [not null]
+  reason text
+  notified_faculty boolean [default: false]
+  created_at timestamptz
+}
+
+// ============================================================
+// GROUP 14: Misc / Marketing
+// ============================================================
+
+Table bundles {
+  id varchar(100) [pk]
+  name varchar(200) [not null]
+  description text
+  emoji varchar(10)
+  price integer [not null]
+  original_price integer
+  discount_pct integer [default: 0]
+  track_ids json [not null]
+  track_count integer [default: 0]
+  target_persona varchar(50)
+  tier varchar(20) [note: "starter|growth|pro|elite"]
+  is_active boolean [default: true]
+  created_at timestamptz
+}
+
+Table testimonials {
+  id varchar(36) [pk]
+  student_name varchar(100) [not null]
+  student_avatar varchar(500)
+  track_id varchar(100)
+  quote text [not null]
+  rating integer [default: 5]
+  income_before varchar(50)
+  income_after varchar(50)
+  video_url varchar(500)
+  is_featured boolean [default: false]
+  is_active boolean [default: true]
+  created_at timestamptz
+}
+
+Table career_paths {
+  id varchar(36) [pk]
+  name varchar(200) [not null]
+  description text
+  icon_emoji varchar(10)
+  track_sequence json [note: "Ordered list of track IDs"]
+  estimated_months integer
+  target_income varchar(50)
+  target_persona varchar(50)
+  is_active boolean [default: true]
+  created_at timestamptz
+}
+
+Table faqs {
+  id varchar(36) [pk]
+  question varchar(500) [not null]
+  answer text [not null]
+  category varchar(50) [default: "general"]
+  order_index integer [default: 0]
+  is_active boolean [default: true]
+  views_count integer [default: 0]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table feedback {
+  id varchar(36) [pk]
+  user_id varchar(36)
+  type varchar(20) [not null, default: "nps"]
+  score integer
+  comment text
+  page varchar(100)
+  created_at timestamptz
+}
+
+Table ambassadors {
+  id varchar(36) [pk]
+  user_id varchar(36)
+  name varchar(100) [not null]
+  type varchar(20) [not null, default: "ambassador"]
+  phone varchar(15)
+  email varchar(255)
+  social_links json
+  status varchar(20) [default: "pending"]
+  total_referrals integer [default: 0]
+  total_content integer [default: 0]
+  total_earnings numeric(10,2) [default: 0]
+  approved_at timestamptz
+  created_at timestamptz
+}
+
+Table ab_test_variants {
+  id varchar(36) [pk]
+  experiment_name varchar(100) [not null]
+  variant varchar(20) [not null, note: "control|variant_a|variant_b"]
+  user_id varchar(36)
+  session_id varchar(100)
+  converted boolean [default: false]
+  conversion_value numeric(10,2)
+  created_at timestamptz
+}
+
+Table waitlist_entries {
+  id varchar(36) [pk]
+  name varchar(100) [not null]
+  phone varchar(15) [not null]
+  email varchar(255)
+  track_interest varchar(100)
+  status varchar(20) [default: "waiting"]
+  notified_at timestamptz
+  created_at timestamptz
+}
+
+Table gifts {
+  id varchar(36) [pk]
+  code varchar(50) [not null, unique]
+  gift_type varchar(30) [not null, default: "discount"]
+  track_id varchar(100)
+  discount_value integer
+  sender_name varchar(100)
+  recipient_name varchar(100)
+  recipient_email varchar(255)
+  message text
+  is_redeemed boolean [default: false]
+  redeemed_by varchar(36)
+  redeemed_at timestamptz
+  expires_at timestamptz
+  created_at timestamptz
+}
+
+Table govt_schemes {
+  id varchar(36) [pk]
+  name varchar(200) [not null]
+  description text
+  eligibility text
+  benefits text
+  apply_link varchar(500)
+  deadline timestamptz
+  is_active boolean [default: true]
+  created_at timestamptz
+}
+
+Table blog_posts_legacy {
+  id varchar(36) [pk]
+  slug varchar(200) [not null, unique]
+  title varchar(300) [not null]
+  content text [not null]
+  excerpt varchar(500)
+  author_name varchar(100) [default: "EasySkill Team"]
+  category varchar(50)
+  tags json
+  cover_image_url varchar(500)
+  is_published boolean [default: false]
+  published_at timestamptz
+  views_count integer [default: 0]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+
+// ============================================================
+// RELATIONSHIPS
+// ============================================================
+
+// Auth & Users
+Ref: users.manager_id > users.id
+Ref: profiles.user_id - users.id
+Ref: user_backup_codes.user_id > users.id
+Ref: api_keys.created_by_id > users.id
+
+// CRM
+Ref: leads.assigned_counselor_id > users.id
+Ref: leads.lead_partner_id > users.id
+Ref: leads.interested_track_id > tracks.id
+Ref: lead_interactions.lead_id > leads.id
+Ref: lead_interactions.counselor_id > users.id
+Ref: lead_ai_scores.lead_id > leads.id
+Ref: lead_stage_recommendations_log.lead_id > leads.id
+Ref: lead_stage_recommendations_log.decided_by_id > users.id
+Ref: lead_attachments.lead_id > leads.id
+Ref: lead_attachments.uploaded_by_id > users.id
+Ref: counselor_profiles.user_id - users.id
+Ref: counselor_match_logs.lead_id > leads.id
+Ref: counselor_match_logs.recommended_counselor_id > users.id
+Ref: counselor_match_logs.assigned_counselor_id > users.id
+Ref: counselor_match_logs.override_counselor_id > users.id
+Ref: campaigns.created_by > users.id
+Ref: campaign_steps.campaign_id > campaigns.id
+Ref: campaign_steps.condition_if_opened_id > campaign_steps.id
+Ref: campaign_steps.condition_if_converted_id > campaign_steps.id
+Ref: campaign_executions.campaign_id > campaigns.id
+Ref: campaign_executions.lead_id > leads.id
+Ref: campaign_executions.student_id > users.id
+Ref: campaign_step_results.execution_id > campaign_executions.id
+Ref: campaign_step_results.step_id > campaign_steps.id
+Ref: chat_messages.lead_id > leads.id
+Ref: chat_messages.sent_by_user_id > users.id
+Ref: ai_conversations.lead_id - leads.id
+Ref: counselor_tasks.lead_id > leads.id
+Ref: counselor_tasks.counselor_id > users.id
+Ref: counselor_tasks.assigned_by > users.id
+Ref: prompt_versions.created_by > users.id
+
+// Learning
+Ref: tracks.created_by > users.id
+Ref: modules.track_id > tracks.id
+Ref: sub_modules.module_id > modules.id
+Ref: milestones.module_id - modules.id
+Ref: tasks.module_id > modules.id
+Ref: resources.module_id > modules.id
+Ref: resources.track_id > tracks.id
+Ref: enrollments.user_id > users.id
+Ref: enrollments.student_id > students.id
+Ref: enrollments.track_id > tracks.id
+Ref: enrollments.batch_id > batches.id
+Ref: enrollments.payment_id > payments.id
+Ref: enrollments.enrolled_by > users.id
+Ref: progress_records.enrollment_id > enrollments.id
+Ref: progress_records.module_id > modules.id
+Ref: sub_module_progress.enrollment_id > enrollments.id
+Ref: sub_module_progress.sub_module_id > sub_modules.id
+Ref: earned_milestones.enrollment_id > enrollments.id
+Ref: earned_milestones.milestone_id > milestones.id
+Ref: certificates.user_id > users.id
+Ref: certificates.enrollment_id > enrollments.id
+Ref: certificates.track_id > tracks.id
+Ref: grades.submission_id - submissions.id
+
+// Students
+Ref: students.user_id - users.id
+Ref: learner_profile_deep.student_id - students.id
+Ref: student_learning_paths.student_id > students.id
+Ref: student_learning_paths.enrollment_id > enrollments.id
+Ref: student_notes.student_id > students.id
+Ref: student_notes.module_id > modules.id
+Ref: achievements.user_id > users.id
+Ref: referral_commissions.referrer_id > users.id
+Ref: referral_commissions.referred_id > users.id
+Ref: referral_commissions.payment_id > payments.id
+Ref: audit_responses.user_id > users.id
+Ref: audit_responses.payment_id > payments.id
+
+// Assessment
+Ref: assessments.module_id > modules.id
+Ref: assessments.track_id > tracks.id
+Ref: assessments.created_by > users.id
+Ref: questions.assessment_id > assessments.id
+Ref: questions.source_question_bank_id > question_bank.id
+Ref: question_bank.track_id > tracks.id
+Ref: question_bank.module_id > modules.id
+Ref: question_bank.created_by > users.id
+Ref: submissions.user_id > users.id
+Ref: submissions.task_id > tasks.id
+Ref: submissions.enrollment_id > enrollments.id
+Ref: submissions.assessment_id > assessments.id
+Ref: answers.submission_id > submissions.id
+Ref: answers.question_id > questions.id
+Ref: ai_grading_results.answer_id - answers.id
+Ref: ai_grading_results.human_override_by > users.id
+Ref: grade_disputes.submission_id > submissions.id
+Ref: grade_disputes.question_id > questions.id
+Ref: grade_disputes.user_id > users.id
+Ref: grade_disputes.reviewer_id > users.id
+
+// Finance
+Ref: payments.user_id > users.id
+Ref: fee_payments.enrollment_id > enrollments.id
+Ref: emi_plans.enrollment_id > enrollments.id
+Ref: emi_installments.emi_plan_id > emi_plans.id
+Ref: invoices.enrollment_id > enrollments.id
+Ref: invoices.generated_by > users.id
+Ref: scholarship_schemes.created_by > users.id
+Ref: scholarship_applications.scheme_id > scholarship_schemes.id
+Ref: scholarship_applications.enrollment_id > enrollments.id
+Ref: scholarship_applications.student_user_id > users.id
+Ref: scholarship_applications.reviewer_id > users.id
+Ref: scholarships.student_id > students.id
+Ref: scholarships.track_id > tracks.id
+Ref: scholarships.approved_by > users.id
+Ref: refunds.enrollment_id > enrollments.id
+Ref: refunds.reviewed_by > users.id
+Ref: refunds.processed_by > users.id
+
+// Placement
+Ref: employers.user_id > users.id
+Ref: employers.onboarded_by > users.id
+Ref: job_listings.employer_id > employers.id
+Ref: job_applications.student_id > students.id
+Ref: job_applications.job_listing_id > job_listings.id
+Ref: job_applications.resume_id > generated_resumes.id
+Ref: job_matches.student_id > students.id
+Ref: job_matches.job_listing_id > job_listings.id
+Ref: generated_resumes.student_id > students.id
+Ref: student_portfolios.student_id > students.id
+Ref: student_portfolios.track_id > tracks.id
+Ref: employer_interactions.employer_id > employers.id
+Ref: employer_interactions.logged_by > users.id
+Ref: mock_interview_sessions.prep_plan_id > interview_prep_plans.id
+Ref: mock_interview_sessions.student_id > students.id
+Ref: interview_prep_plans.student_id > students.id
+Ref: interview_prep_plans.job_listing_id > job_listings.id
+Ref: placement_outcomes.student_id > students.id
+Ref: placement_outcomes.enrollment_id > enrollments.id
+Ref: placement_outcomes.job_listing_id > job_listings.id
+Ref: placement_outcomes.employer_id > employers.id
+Ref: placement_outcomes.application_id > job_applications.id
+Ref: placement_outcomes.verified_by > users.id
+Ref: success_stories.placement_outcome_id - placement_outcomes.id
+Ref: success_stories.student_id > students.id
+Ref: success_stories.approved_by > users.id
+Ref: justnaukri_sync.student_id - students.id
+Ref: jobs.employer_id > users.id
+
+// Community
+Ref: community_posts.user_id > users.id
+Ref: community_replies.post_id > community_posts.id
+Ref: community_replies.user_id > users.id
+Ref: community_post_votes.post_id > community_posts.id
+Ref: community_post_votes.user_id > users.id
+Ref: study_buddy_opt_ins.user_id - users.id
+Ref: study_groups.track_id > tracks.id
+Ref: study_groups.created_by > users.id
+Ref: support_tickets.user_id > users.id
+Ref: support_ticket_messages.ticket_id > support_tickets.id
+Ref: support_ticket_messages.sender_id > users.id
+
+// Communication
+Ref: notifications.user_id > users.id
+Ref: broadcast_audience_groups.created_by > users.id
+Ref: whatsapp_templates.created_by > users.id
+Ref: whatsapp_template_events.template_id > whatsapp_templates.id
+Ref: batch_communications.batch_id > batches.id
+Ref: batch_communications.sent_by > users.id
+Ref: batch_communications.target_student_id > students.id
+Ref: batch_communications.session_id > sessions.id
+Ref: batch_communication_recipients.communication_id > batch_communications.id
+Ref: batch_communication_recipients.student_id > students.id
+Ref: batch_communication_recipients.user_id > users.id
+Ref: faculty_student_flags.student_id > students.id
+Ref: faculty_student_flags.batch_id > batches.id
+Ref: faculty_student_flags.flagged_by > users.id
+
+// AI & Config
+Ref: kai_conversations.student_id > students.id
+Ref: kai_conversations.task_id > tasks.id
+Ref: kai_attachments.message_id > kai_conversations.id
+Ref: kai_attachments.student_id > students.id
+Ref: ai_usage_cap_policy.updated_by_user_id > users.id
+Ref: nl_query_logs.user_id > users.id
+Ref: saved_queries.user_id > users.id
+
+// Batches & Sessions
+Ref: batches.track_id > tracks.id
+Ref: batches.faculty_id > users.id
+Ref: batch_enrollments.batch_id > batches.id
+Ref: batch_enrollments.enrollment_id > enrollments.id
+Ref: sessions.batch_id > batches.id
+Ref: sessions.module_id > modules.id
+Ref: session_attendance.session_id > sessions.id
+Ref: session_attendance.student_id > students.id
+Ref: session_attendance.batch_id > batches.id
+Ref: session_attendance.marked_by > users.id
+Ref: live_sessions.track_id > tracks.id
+Ref: live_sessions.batch_id > batches.id
+
+// HR
+Ref: staff.user_id - users.id
+Ref: staff.reporting_to > users.id
+Ref: attendance_records.staff_id > staff.id
+Ref: attendance_records.marked_by > users.id
+Ref: hubstaff_activities.staff_id > staff.id
+Ref: integrity_scores.staff_id > staff.id
+Ref: integrity_scores.reviewed_by > users.id
+Ref: leave_requests.staff_id > staff.id
+Ref: leave_requests.approved_by > users.id
+Ref: leave_balances.staff_id > staff.id
+Ref: public_holidays.created_by > users.id
+Ref: job_postings.created_by > users.id
+Ref: recruitment_applications.job_id > job_postings.id
+
+// Parent
+Ref: parent_student_links.parent_user_id > users.id
+Ref: parent_student_links.student_id > students.id
+Ref: parent_narrative_cache.student_id > students.id
+Ref: absence_notes.student_id > students.id
+Ref: absence_notes.reported_by > users.id
+
+// Misc
+Ref: testimonials.track_id > tracks.id
+Ref: feedback.user_id > users.id
+Ref: ambassadors.user_id > users.id
+
+
+// ============================================================
+// TABLE GROUPS
+// ============================================================
+
+TableGroup AuthUsers {
+  users
+  profiles
+  user_backup_codes
+  api_keys
+  audit_logs
+  active_sessions
+  security_events
+  erasure_requests
+}
+
+TableGroup CRM {
+  leads
+  lead_interactions
+  lead_ai_scores
+  lead_stage_recommendations_log
+  lead_attachments
+  counselor_profiles
+  counselor_match_logs
+  campaigns
+  campaign_steps
+  campaign_executions
+  campaign_step_results
+  chat_messages
+  ai_conversations
+  counselor_tasks
+  prompt_versions
+}
+
+TableGroup Learning {
+  tracks
+  modules
+  sub_modules
+  milestones
+  tasks
+  enrollments
+  progress_records
+  sub_module_progress
+  earned_milestones
+  resources
+  certificates
+  grades
+}
+
+TableGroup Students {
+  students
+  learner_profile_deep
+  student_learning_paths
+  student_notes
+  achievements
+  badge_catalog
+  level_config
+  xp_rule
+  referral_commissions
+  audit_responses
+}
+
+TableGroup Assessment {
+  assessments
+  questions
+  question_bank
+  submissions
+  answers
+  ai_grading_results
+  grade_disputes
+}
+
+TableGroup Finance {
+  payments
+  fee_payments
+  emi_plans
+  emi_installments
+  invoices
+  coupons
+  scholarship_schemes
+  scholarship_applications
+  scholarships
+  refunds
+  revenue_forecasts
+  document_sequences
+}
+
+TableGroup Placement {
+  employers
+  job_listings
+  job_applications
+  job_matches
+  generated_resumes
+  student_portfolios
+  employer_interactions
+  mock_interview_sessions
+  interview_prep_plans
+  placement_outcomes
+  success_stories
+  justnaukri_sync
+  jobs
+}
+
+TableGroup Community {
+  community_posts
+  community_replies
+  community_post_votes
+  study_buddy_opt_ins
+  study_groups
+  support_tickets
+  support_ticket_messages
+}
+
+TableGroup Communication {
+  notifications
+  notification_configs
+  broadcast_audience_groups
+  whatsapp_templates
+  whatsapp_template_events
+  whatsapp_logs
+  batch_communications
+  batch_communication_recipients
+  faculty_student_flags
+}
+
+TableGroup AIAndConfig {
+  kai_conversations
+  kai_attachments
+  knowledge_chunks
+  ai_usage_cap_policy
+  feature_flags
+  ai_model_configs
+  ai_system_prompts
+  nl_query_logs
+  saved_queries
+  centre_configs
+  pricing_tiers
+  global_settings
+  brand_configs
+  system_announcements
+  platform_settings
+}
+
+TableGroup BatchesAndSessions {
+  batches
+  batch_enrollments
+  sessions
+  session_attendance
+  live_sessions
+}
+
+TableGroup HR {
+  staff
+  attendance_records
+  hubstaff_activities
+  integrity_scores
+  leave_requests
+  leave_balances
+  public_holidays
+  job_postings
+  recruitment_applications
+}
+
+TableGroup ParentPortal {
+  parent_student_links
+  parent_narrative_cache
+  absence_notes
+}
+
+TableGroup Marketing {
+  bundles
+  testimonials
+  career_paths
+  faqs
+  feedback
+  ambassadors
+  ab_test_variants
+  waitlist_entries
+  gifts
+  govt_schemes
+  blog_posts_legacy
+}

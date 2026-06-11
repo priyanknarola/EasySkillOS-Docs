@@ -1,0 +1,54 @@
+title: EasySkillOS Docs
+description: "Technical documentation for EasySkill Career Academy AI-Powered Career OS — 17 portals, 987 endpoints, 136 DB tables"
+baseurl: "/EasySkillOS-Docs"
+url: "https://priyanknarola.github.io"
+
+# Build settings
+markdown: kramdown
+highlighter: rouge
+theme: minima
+
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    css_class: "highlight"
+    block:
+      line_numbers: false
+
+# Plugins (GitHub Pages safe list)
+plugins:
+  - jekyll-sitemap
+  - jekyll-feed
+  - jekyll-relative-links
+  - jekyll-seo-tag
+
+# SEO
+author: EasySkill Engineering
+lang: en
+
+# Navigation order
+nav_order:
+  - index
+  - architecture
+  - api-reference
+  - database
+  - diagrams
+  - deployment
+  - lead-management
+
+# Exclude from build
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - README.md
+  - vendor
+
+# Defaults
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "default"
